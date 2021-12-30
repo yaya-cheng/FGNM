@@ -16,7 +16,7 @@ from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope
 
 slim = tf.contrib.slim
 
-tf.flags.DEFINE_string('checkpoint_path', '/models', 'Path to checkpoint for inception network.')
+tf.flags.DEFINE_string('checkpoint_path', 'models', 'Path to checkpoint for inception network.')
 tf.flags.DEFINE_string('input_csv', 'dataset/dev_dataset.csv', 'Input directory with images.')
 tf.flags.DEFINE_string('input_dir', 'dataset/images', 'Input directory with images.')
 tf.flags.DEFINE_float('max_epsilon', 16.0, 'Maximum size of adversarial perturbation.')
@@ -29,8 +29,8 @@ tf.flags.DEFINE_integer('batch_size', 70, 'How many images process at one time.'
 tf.flags.DEFINE_integer('k', 200001, 'top k gradient')
 tf.flags.DEFINE_float('momentum', 1.0, 'Momentum.')
 tf.flags.DEFINE_float('prob', 0.7, 'probability of using diverse inputs.')
-tf.flags.DEFINE_string('method', 'm', 'attack method. m: MIFGSM, i: IFGSM, t: TIFGSM, d: DIFGSM, s: SIFGSM')
-tf.flags.DEFINE_string('mode', 'sign', 'attack mode: raw, sign, affine')
+tf.flags.DEFINE_string('method', 'm', 'attack method. m: MIFGSM, if: IFGSM, t: TIFGSM, d: DIFGSM, s: SIFGSM')
+tf.flags.DEFINE_string('mode', 'sign', 'attack mode: raw, sign, affine, test')
 tf.flags.DEFINE_float('decimal', '0.9', 'decimal')
 
 FLAGS = tf.flags.FLAGS
@@ -80,8 +80,8 @@ def affine(x, maxValue: float):
     zero_ = tf.zeros_like(boost) + 1e-6
     boost = tf.where(boost<1e-20, x=zero_, y=boost)
     scale = tf.sqrt(l2Sum(tf.sign(x)) / boost)
-    with tf.control_dependencies([tf.print(tf.reduce_max(scale), tf.reduce_min(scale))]):
-        x = tf.identity(x)
+    # with tf.control_dependencies([tf.print(tf.reduce_max(scale), tf.reduce_min(scale))]):
+        # x = tf.identity(x)
     scale = tf.expand_dims(scale, -1)
     scale = tf.expand_dims(scale, -1)
     scale = tf.expand_dims(scale, -1)
@@ -624,7 +624,7 @@ def main(_):
 
     batch_shape = [FLAGS.batch_size, FLAGS.image_height, FLAGS.image_width, 3]
     tf.logging.set_verbosity(tf.logging.INFO)
-
+    
     with tf.Graph().as_default() as g:
         x_input = tf.placeholder(tf.float32, shape = batch_shape)
         adv_img = tf.placeholder(tf.float32, shape = batch_shape)
@@ -632,7 +632,7 @@ def main(_):
         x_max = tf.clip_by_value(x_input + eps, -1.0, 1.0)
         x_min = tf.clip_by_value(x_input - eps, -1.0, 1.0)
         K = tf.placeholder(tf.int32, shape = ())
-
+        
         with slim.arg_scope(vgg.vgg_arg_scope()):
             logits_adv_vgg16, end_poiincvnts_adv_vgg16 = vgg.vgg_16(
                     tf.image.resize(adv_img, [224, 224]), num_classes = num_classes-1, is_training = False, scope = 'vgg_16')
@@ -651,7 +651,6 @@ def main(_):
         with slim.arg_scope(densenet.densenet_arg_scope()):
             logits_adv_dense, end_poiincvnts_adv_dense = densenet.densenet161(
                     tf.image.resize(adv_img, [224, 224]), num_classes = num_classes-1, is_training = False, reuse=tf.AUTO_REUSE)
-        
         with slim.arg_scope(inception_v3.inception_v3_arg_scope()):
             logits_ens3_adv_v3, end_points_ens3_adv_v3 = inception_v3.inception_v3(
                 adv_img, num_classes=num_classes, is_training=False, scope='Ens3AdvInceptionV3')
@@ -663,6 +662,7 @@ def main(_):
         with slim.arg_scope(inception_resnet_v2.inception_resnet_v2_arg_scope()):
             logits_ensadv_res_v2, end_points_ensadv_res_v2 = inception_resnet_v2.inception_resnet_v2(
                 adv_img, num_classes=num_classes, is_training=False, scope='EnsAdvInceptionResnetV2')
+        
         pre_ensadv_res_v2 = tf.argmax(logits_ensadv_res_v2, 1)
 
         logits_adv_dense = tf.squeeze(logits_adv_dense)
@@ -723,8 +723,9 @@ def main(_):
 
             import pandas as pd
             allResult = list()
+
             for kk in range(1, 299*299*3-1, 500):
-                kk = 120001
+                kk = FLAGS.k
                 dev = pd.read_csv(FLAGS.input_csv)
                 eps = 2.0 * FLAGS.max_epsilon / 255.0
                 num_classes = FLAGS.num_classes
@@ -737,7 +738,7 @@ def main(_):
                 sum_adv_ensen3Incv3 = 0
                 sum_ens3_adv_v3, sum_ens4_adv_v3, sum_ensadv_res_v2, sum_ensadv_vgg = 0, 0, 0, 0
                 meanALL = 0.0
-                for idx in range(0, 1000 // FLAGS.batch_size):
+                for idx in tqdm(range(0, 1000 // FLAGS.batch_size)):
                     images, filenames, True_label = load_images(FLAGS.input_dir, dev, idx * FLAGS.batch_size, batch_shape)
                     my_adv_images = sess.run(x_adv, feed_dict={x_input: images, y: True_label, K: kk})
                     my_adv_images = my_adv_images.astype(np.float32)
@@ -769,6 +770,7 @@ def main(_):
 
                 # save result with different k
                 #allResult.append([kk, (meanALL/(1000.0/FLAGS.batch_size))*255.0/2.0, sum_adv_incv3 / 1000.0, sum_adv_incv4 / 1000.0, sum_adv_res152 / 1000.0, sum_adv_incres / 1000.0, sum_adv_dense / 1000.0, sum_ens3_adv_v3/1000.0, sum_ens4_adv_v3/1000.0, sum_ensadv_res_v2/1000.0])
+                print("mode: ", FLAGS.mode)
                 print('K: ', kk)
                 # mean of noise
                 print('mean noise: ', (meanALL/(1000.0/FLAGS.batch_size))*255.0/2.0)
