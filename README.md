@@ -26,7 +26,6 @@ Adversarial attacks make their success in “fooling” DNNs and among them, gra
 
   ```python
   python attack.py --method if --mode affine 
-  ``
 
 ## Citing this work
 
